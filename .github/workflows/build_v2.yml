@@ -17,12 +17,12 @@ jobs:
       - name: 版本对比
         run: |
           # 发送GET请求
-          $response = Invoke-WebRequest -Uri https://api.github.com/repos/developer-wlj/MoviePilot/git/refs/heads/v2 | ConvertFrom-Json
+          $response = Invoke-WebRequest -Uri https://api.github.com/repos/Cyrker/MoviePilot/git/refs/heads/v2 | ConvertFrom-Json
           # echo $response.object.sha
           $latest_commit_sha = $response.object.sha
           echo $latest_commit_sha
           # 获取倒数第二次提交的hash
-          $response1 = Invoke-WebRequest -Uri "https://api.github.com/repos/developer-wlj/MoviePilot/git/commits/$latest_commit_sha" | ConvertFrom-Json
+          $response1 = Invoke-WebRequest -Uri "https://api.github.com/repos/Cyrker/MoviePilot/git/commits/$latest_commit_sha" | ConvertFrom-Json
           $newArray = [System.Collections.ArrayList]::new()
           # 遍历数组中的每个对象
           foreach ($item in $response1.parents) {
@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: v2
-          repository: developer-wlj/MoviePilot
+          repository: Cyrker/MoviePilot
           path: 'MoviePilot'
           fetch-depth: 2
 
