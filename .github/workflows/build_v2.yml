@@ -3,13 +3,13 @@ name: V2 Build
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0/4 * * *'
+    - cron: '0 0/4 * * *'  # 每4小时运行一次
 
 env:
   REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
   REPO: ${{ secrets.REPO }}
   DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-  BASE_REPO: Cyrker
+  BASE_REPO: Cyrker  # 你 fork 的组织名或用户名
 
 jobs:
   Windows-build:
@@ -20,45 +20,30 @@ jobs:
     steps:
       - name: 版本对比
         run: |
-          # 获取 Cyrker/MoviePilot 的最新 commit
           $response = Invoke-WebRequest -Uri "https://api.github.com/repos/${{ env.BASE_REPO }}/MoviePilot/git/refs/heads/v2" | ConvertFrom-Json
           $latest_commit_sha = $response.object.sha
           echo "Cyrker 最新 commit: $latest_commit_sha"
 
-          # 获取其父提交（避免只有一个 commit 时出错）
-          $response1 = Invoke-WebRequest -Uri "https://api.github.com/repos/${{ env.BASE_REPO }}/MoviePilot/git/commits/$latest_commit_sha" | ConvertFrom-Json
-          $newArray = [System.Collections.ArrayList]::new()
-          if ($response1.parents) {
-            foreach ($item in $response1.parents) {
-              $sha = $item.sha
-              echo "父提交: $sha"
-              $newArray.Add($sha)
-            }
-          } else {
-            Write-Output "⚠️ 当前 commit 没有父提交，可能是新建或强推。"
-            $newArray.Add($latest_commit_sha)
-          }
-
-          # 获取 jxxghp/MoviePilot 的 commit
-          $response3 = Invoke-WebRequest -Uri https://api.github.com/repos/jxxghp/MoviePilot/git/refs/heads/v2 | ConvertFrom-Json
+          $response3 = Invoke-WebRequest -Uri "https://api.github.com/repos/jxxghp/MoviePilot/git/refs/heads/v2" | ConvertFrom-Json
           $jxxghp_version = $response3.object.sha
           echo "上游 jxxghp commit: $jxxghp_version"
 
-          if ($newArray -contains $jxxghp_version) {
-            # 获取你自己的 Windows-MoviePilot 的最新 release
+          if ($latest_commit_sha -eq $jxxghp_version) {
+            Write-Output "代码已同步，检查是否已发布 Release"
+
             $response4 = Invoke-WebRequest -Uri "https://api.github.com/repos/${{ env.BASE_REPO }}/Windows-MoviePilot/releases/latest" | ConvertFrom-Json
             $tagName = $response4.tag_name
-            echo "最新 Release tag: $tagName"
-            echo "jxxghp commit 前7位: $($jxxghp_version.Substring(0, 7))"
+            echo "Release tag: $tagName"
+            echo "jxxghp commit (前7): $($jxxghp_version.Substring(0, 7))"
 
-            if ($tagName.contains($jxxghp_version.Substring(0, 7))) {
-              Write-Output "版本相同,无需更新"
+            if ($tagName -like "*$($jxxghp_version.Substring(0, 7))*") {
+              Write-Output "版本相同，已发布过，无需重新打包"
               exit 1
             } else {
-              Write-Output "检测到新的 commit，执行重新打包"
+              Write-Output "检测到新 commit，准备打包"
             }
           } else {
-            Write-Output "代码未同步或存在冲突，跳过打包"
+            Write-Output "本地代码未同步上游，跳过打包"
             exit 1
           }
 
@@ -72,7 +57,7 @@ jobs:
           path: 'Inno-Setup-MoviePilot'
           fetch-depth: 1
 
-      - name: 拉取 MoviePilot 主代码
+      - name: 拉取主程序源代码
         uses: actions/checkout@v4
         with:
           ref: v2
@@ -86,7 +71,7 @@ jobs:
           python-version: '3.11.4'
           cache: 'pip'
 
-      - name: 安装依赖和资源
+      - name: 安装依赖并准备资源
         id: INSTALL_PACKAGES
         run: |
           cd MoviePilot
@@ -95,34 +80,32 @@ jobs:
           Remove-Item ".\config\app.env"
           $hash_version=(git log -2 --pretty=format:"%h" | Select-Object -Skip 1)
           $GIT_LOG=(git log -2 --oneline | Select-Object -Last 1)
-          echo $GIT_LOG
           echo "KEYM=$GIT_LOG" >> $env:GITHUB_OUTPUT
-          echo $hash_version
           echo "HASH_VERSION=$hash_version" >> $env:GITHUB_ENV
           cd app/helper
           Invoke-WebRequest -URI "https://raw.githubusercontent.com/jxxghp/MoviePilot-Resources/main/resources/sites.cp311-win_amd64.pyd" -OutFile "sites.cp311-win_amd64.pyd"
           Invoke-WebRequest -URI "https://raw.githubusercontent.com/jxxghp/MoviePilot-Resources/main/resources/user.sites.v2.bin" -OutFile "user.sites.v2.bin"
           cd ../plugins/
-          Invoke-WebRequest -Uri "https://github.com/jxxghp/MoviePilot-Plugins/archive/refs/heads/main.zip" -OutFile "MoviePilot-Plugins-main.zip"
-          Expand-Archive -Path "MoviePilot-Plugins-main.zip" -DestinationPath "MoviePilot-Plugins-main"
-          Move-Item -Path "MoviePilot-Plugins-main/MoviePilot-Plugins-main/plugins.v2/*" -Destination . -Force
-          Remove-Item -Path "MoviePilot-Plugins-main.zip"
-          Remove-Item -Path "MoviePilot-Plugins-main" -Recurse -Force
+          Invoke-WebRequest -Uri "https://github.com/jxxghp/MoviePilot-Plugins/archive/refs/heads/main.zip" -OutFile "plugins.zip"
+          Expand-Archive -Path "plugins.zip" -DestinationPath "plugins"
+          Move-Item -Path "plugins/MoviePilot-Plugins-main/plugins.v2/*" -Destination . -Force
+          Remove-Item -Path "plugins.zip"
+          Remove-Item -Path "plugins" -Recurse -Force
           Get-ChildItem -Path . -Recurse -Filter "requirements.txt" | ForEach-Object { pip install -r $_ }
 
       - name: 下载前端资源
         run: |
           $FRONTEND_VERSION = Get-Content "./MoviePilot/version.py" | Select-String "FRONTEND_VERSION" | ForEach-Object {$_.ToString().Split('=')[1].Trim() -replace "'", "" -replace '"', ""}
           $APP_VERSION = Get-Content "./MoviePilot/version.py" | Select-String "APP_VERSION" | ForEach-Object {$_.ToString().Split('=')[1].Trim() -replace "'", "" -replace '"', ""}
-          echo "FRONTEND_VERSION: $FRONTEND_VERSION"
-          echo "APP_VERSION: $APP_VERSION"
+          echo "FRONTEND_VERSION=$FRONTEND_VERSION"
+          echo "APP_VERSION=$APP_VERSION"
           mkdir MoviePilot-Frontend
           cd MoviePilot-Frontend
           Invoke-WebRequest -URI "https://github.com/jxxghp/MoviePilot-Frontend/releases/download/$FRONTEND_VERSION/dist.zip" -OutFile dist.zip
           Expand-Archive dist.zip -DestinationPath .
           Move-Item -Path .\dist\* -Destination . -Force
-          Remove-Item -Path "dist.zip"
-          Remove-Item -Path "dist" -Recurse
+          Remove-Item dist.zip
+          Remove-Item dist -Recurse
           $tagName = $APP_VERSION.Substring(1)
           echo "FIRST_VERSION=$tagName" >> $env:GITHUB_ENV
           echo ("LATEST_VERSION=" + "$tagName.$env:HASH_VERSION") >> $env:GITHUB_ENV
@@ -146,7 +129,7 @@ jobs:
           Copy-Item -Path ".\ChineseSimplified.isl" -Destination "C:\Users\runneradmin\AppData\Local\Temp\inno\Languages"
           C:\Users\runneradmin\AppData\Local\Temp\inno\iscc "/DMyAppVersion=$env:LATEST_VERSION" build.iss
 
-      - name: 获取当前时间（上海）
+      - name: 获取当前上海时间
         run: |
           $currentUtcTime = (Get-Date).ToUniversalTime()
           $shanghaiTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("China Standard Time")
